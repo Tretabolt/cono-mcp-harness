@@ -184,18 +184,42 @@ class AgentOrchestrator:
                     obs = self._call(mcp, "rotate", {"degrees": 90}, intention="varredura_360")
                     yaw[0] = obs["yaw"]
 
+            def look_east() -> None:
+                # Olhar dirigido para o fundo da sala (leste): a varredura 360 ja
+                # cobriu os outros eixos e so resta a profundidade nao vista.
+                # Gira para o leste (1 tick) e inspeciona (gratis); registra o
+                # primeiro objeto do raio, como faz scan_room().
+                nonlocal obs
+                for rot in self._plan_yaw_to(yaw[0], 90):
+                    budget.consume()
+                    obs = self._call(mcp, "rotate", {"degrees": rot}, intention="olhar_leste_cozinha")
+                    yaw[0] = obs["yaw"]
+                obs = self._call(mcp, "inspect", intention="confirmar_geladeira_leste")
+                if obs["visible_ray"]:
+                    hit = obs["visible_ray"][0]
+                    d = hit["distance"]
+                    for k in range(1, d):
+                        known_free.add((pos[0] + k, pos[1]))
+                    seen_labels[hit["label"]] = (pos[0] + d, pos[1])
+                    approach_from[hit["label"]] = (pos[0] + d - 1, pos[1])
+
             def walk_to_adjacent(target_label: str) -> None:
                 nonlocal obs
                 tx, ty = seen_labels[target_label]
-                # Encontra melhor celula livre adjacente
-                adj = None
-                for adx, ady in ((0, -1), (1, 0), (0, 1), (-1, 0)):
-                    cand = (tx + adx, ty + ady)
-                    if cand in known_free:
-                        adj = cand
-                        break
-                if adj is None:
-                    adj = approach_from[target_label]
+                # Ja estamos ao lado do alvo: nao andar. Sem isso o agente
+                # abandonava (9,2) para ir a (10,3) e voltava, gastando 5 ticks.
+                if abs(pos[0] - tx) + abs(pos[1] - ty) == 1:
+                    adj = (pos[0], pos[1])
+                else:
+                    # Encontra melhor celula livre adjacente
+                    adj = None
+                    for adx, ady in ((0, -1), (1, 0), (0, 1), (-1, 0)):
+                        cand = (tx + adx, ty + ady)
+                        if cand in known_free:
+                            adj = cand
+                            break
+                    if adj is None:
+                        adj = approach_from[target_label]
                 path = self._bfs_path((pos[0], pos[1]), adj, blocked, known_free) or []
                 for step_dx, step_dy in path:
                     obs = self._step_to(mcp, budget, pos, yaw, step_dx, step_dy)
@@ -252,6 +276,16 @@ class AgentOrchestrator:
             if not has_shortcut:
                 # Episodio 1: faz varredura completa exploratoria na cozinha
                 scan_room()
+                if "Geladeira" not in seen_labels:
+                    # A geladeira esta na diagonal do fim da varredura (9,3)->(10,2):
+                    # nenhum raio reto a alcanca. Passo exploratorio para o norte,
+                    # mesmo padrao usado na Sala 01, e olhar dirigido para o leste,
+                    # onde esta a profundidade da cozinha ainda nao vista.
+                    known_free.add((pos[0], pos[1] - 1))
+                    obs = self._step_to(mcp, budget, pos, yaw, 0, -1)
+                    traj_positions.append([pos[0] * 0.05, pos[1] * 0.05])
+                    delta_m.append(1.0)
+                    look_east()
             else:
                 # Episodio 2+: Heuristica causal sabe que Geladeira esta na cozinha; vira direto Norte (0)
                 for rot in self._plan_yaw_to(yaw[0], 0):
@@ -266,6 +300,15 @@ class AgentOrchestrator:
                         known_free.add((pos[0], pos[1] - k))
                     seen_labels[hit["label"]] = (pos[0], pos[1] - d)
                     approach_from[hit["label"]] = (pos[0], pos[1] - (d - 1))
+                if "Geladeira" not in seen_labels:
+                    # O raio para o norte nao alcanca a geladeira, que esta na
+                    # diagonal (10,2). Passo exploratorio para o norte e olhar
+                    # dirigido para o leste: de (9,2) o raio leste a encontra.
+                    known_free.add((pos[0], pos[1] - 1))
+                    obs = self._step_to(mcp, budget, pos, yaw, 0, -1)
+                    traj_positions.append([pos[0] * 0.05, pos[1] * 0.05])
+                    delta_m.append(1.0)
+                    look_east()
 
             # Abre geladeira e pega Agua
             walk_to_adjacent("Geladeira")

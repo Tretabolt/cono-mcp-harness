@@ -70,7 +70,9 @@ class TestEvolutionAndPulseOracle(unittest.TestCase):
         )
         # Delta_M na rede de pulsos = variacao da taxa de disparo por tick dentro do ensaio
         delta_spikes_stable = [0.25, 0.25, 0.25, 0.25]
-        spike_positions = [[0.2, 0.05], [0.21, 0.05], [0.2, 0.05]]
+        # Trajetoria estavel: pontos distintos e proximos (o terceiro ponto nao
+        # pode repetir o primeiro — ponto duplicado infla H_fase e derruba o ISC).
+        spike_positions = [[0.2, 0.05], [0.21, 0.05], [0.22, 0.05]]
 
         passed, msg = PulseOracle.verify_trial(trial, decision="VAI", latency_ticks=4, delta_spikes=delta_spikes_stable)
         self.assertTrue(passed, msg)
