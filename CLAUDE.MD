@@ -38,3 +38,13 @@ O `Distiller` só grava uma nova heurística no `CausalGraph` persistente se:
 1. O episódio passar no verificador TDD do nível atual;
 2. O `Pentacosagram` validar a cadeia sem adulteração;
 3. A suíte de regressão dos níveis anteriores continuar verde.
+
+## 6. Integração Oficial com MNHI 3.0 (`mnhi3_bridge.py`)
+- O `cono-mcp-harness` consome o pacote `mnhi` (`mnhi-3.0/src`) como motor oficial da Camada 0, Extrapolation, Heptagram (PCE) e Pentacosagram.
+- **Regra de Saliência vs. Verdade Causal (Nível 4):**
+  - `clue_weight` observado via MCP é tratado apenas como *saliência sensorial bruta*.
+  - Antes de agir sobre uma pista, o agente submete cada candidata ao `MNHI3Engine.simulate_counterfactual()` e ao `Heptagram.evaluate()`.
+  - Pistas com relação não verificada / atalho chamativo (`ATALHO` / `DECOY`) têm PCE travado em `<= 0.20` (`compliant=False`) e são rejeitadas mesmo tendo saliência `0.9`.
+- **Trava Cruzada de Integridade:**
+  - Ao fim de cada episódio, o `MNHI3Bridge` executa `store.run_integrity_audit()` e `pentacosagram.verify_chain()`. Qualquer adulteração anula a aprovação do episódio e bloqueia o `Distiller`.
+- **Ponte opcional:** o import da ponte é preguiçoso — sem o repositório irmão `mnhi-3.0/` ao lado, o harness continua funcionando standalone e os testes cruzados (`test_05`) são pulados.

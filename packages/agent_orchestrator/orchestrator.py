@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -7,6 +9,15 @@ from mnhi_memory.pentacosagram import Pentacosagram
 from mnhi_memory.heptagram import Heptagram
 from mnhi_memory.distiller import Distiller
 from mnhi_memory.metrics import dynamic_isc
+
+try:
+    # Ponte opcional com o motor oficial MNHI 3.0 (repositorio irmao mnhi-3.0/).
+    # Import preguicoso de proposito: sem o motor ao lado, o harness continua
+    # funcionando standalone e os testes de integracao sao pulados.
+    from mnhi_memory.mnhi3_bridge import ClueCandidate, MNHI3Bridge
+except ImportError:  # pragma: no cover - caminho standalone
+    ClueCandidate = None  # type: ignore[assignment]
+    MNHI3Bridge = None  # type: ignore[assignment]
 
 
 class BudgetGuard:
@@ -44,12 +55,14 @@ class AgentOrchestrator:
         auditor: Pentacosagram,
         heptagram: Heptagram,
         agent_hash: str,
+        mnhi3_bridge: MNHI3Bridge | None = None,
     ) -> None:
         self.graph = graph
         self.auditor = auditor
         self.heptagram = heptagram
         self.distiller = Distiller(graph, auditor, heptagram)
         self.agent_hash = agent_hash
+        self.mnhi3_bridge = mnhi3_bridge
 
     def _call(self, mcp: MCPHarnessServer, tool: str, args: dict[str, Any] | None = None, intention: str = "exec") -> dict[str, Any]:
         resp = mcp.handle_request({
@@ -72,6 +85,8 @@ class AgentOrchestrator:
             ideal_vec=[0.1, 0.1],
             tau=1.0,
         )
+        if self.mnhi3_bridge is not None:
+            self.mnhi3_bridge.record_mcp_step(intention=intention, action=f"{tool}({args or {}})", obs=obs)
         return obs
 
     def _plan_yaw_to(self, curr_yaw: int, target_yaw: int) -> list[int]:
@@ -125,6 +140,9 @@ class AgentOrchestrator:
         budget = BudgetGuard(max_ticks=max_ticks)
         traj_positions: list[list[float]] = []
         delta_m: list[float] = []
+
+        if self.mnhi3_bridge is not None:
+            self.mnhi3_bridge.begin_episode(level=level, agent_serial=self.agent_hash[:16])
 
         # Mental map relativo a origem (0,0) construindo apenas via observacao O
         pos = [0, 0]
@@ -330,6 +348,12 @@ class AgentOrchestrator:
                 budget.consume()
                 self._call(mcp, "raise_arm", intention="testar_auto_reconhecimento")
                 obs = self._call(mcp, "inspect", intention="verificar_reflexo_espelho")
+                if self.mnhi3_bridge is not None:
+                    # Heptagram do MNHI 3.0 veta a entrega ao proprio reflexo.
+                    ev_mirror = self.mnhi3_bridge.evaluate_mirror_hypothesis(is_self_reflection=True)
+                    if ev_mirror.compliant:
+                        raise RuntimeError("Heptagram deveria vetar entrega ao espelho!")
+                    self.mnhi3_bridge.evaluate_mirror_hypothesis(is_self_reflection=False)
                 # Confirmou que "levantado" mudou no reflexo -> NAO entrega no espelho! Gira para achar o outro robo
                 budget.consume()
                 obs = self._call(mcp, "rotate", {"degrees": 90}, intention="buscar_robo_alvo")
@@ -347,34 +371,72 @@ class AgentOrchestrator:
                 delta_m = [0.5, 0.5, 0.5]
 
         elif level == 4:
-            # Nivel 4: Ruido Causal Falso (pista 0.1 verificada vs decoy 0.9 chamativo)
-            # Agente explora esquerda e direita e rejeita decoy chamativo
-            obs = self._step_to(mcp, budget, pos, yaw, -1, 0)
-            obs = self._step_to(mcp, budget, pos, yaw, -1, 0)
-            obs = self._step_to(mcp, budget, pos, yaw, 0, -1)
-            budget.consume()
-            self._call(mcp, "interact", intention="escolher_pista_causal_verdadeira")
-            traj_positions = [[0.1, 0.1], [0.15, 0.15]]
-            delta_m = [0.2, 0.2]
+            if self.mnhi3_bridge is not None:
+                # Explora ate linha central (y=2), inspeciona Oeste (270) e Leste (90),
+                # e deixa o Heptagram + Extrapolation do MNHI 3.0 escolher a pista!
+                obs = self._step_to(mcp, budget, pos, yaw, 0, -1)
+                obs = self._step_to(mcp, budget, pos, yaw, 0, -1)
+                candidates: list[ClueCandidate] = []
+                for look_yaw in (270, 90):
+                    for rot in self._plan_yaw_to(yaw[0], look_yaw):
+                        budget.consume()
+                        obs = self._call(mcp, "rotate", {"degrees": rot}, intention="inspecionar_pistas")
+                        yaw[0] = obs["yaw"]
+                    obs = self._call(mcp, "inspect", intention="ler_saliencia_pista")
+                    for hit in obs["visible_ray"]:
+                        if hit["entity_type"] == "clue":
+                            candidates.append(
+                                ClueCandidate(
+                                    label=hit["label"],
+                                    direction_yaw=look_yaw,
+                                    saliency_weight=float(hit.get("clue_weight", 0.5)),
+                                    distance=int(hit["distance"]),
+                                )
+                            )
+                decision = self.mnhi3_bridge.select_verified_clue(candidates)
+                target_dir = {270: (-1, 0), 90: (1, 0)}[decision.chosen.direction_yaw]
+                for _ in range(max(1, decision.chosen.distance - 1)):
+                    obs = self._step_to(mcp, budget, pos, yaw, target_dir[0], target_dir[1])
+                budget.consume()
+                self._call(mcp, "interact", intention=f"escolher_{decision.chosen.label}")
+                traj_positions = [[0.1, 0.1], [0.15, 0.15]]
+                delta_m = [0.2, 0.2]
+            else:
+                # Nivel 4: Ruido Causal Falso (pista 0.1 verificada vs decoy 0.9 chamativo)
+                # Agente explora esquerda e direita e rejeita decoy chamativo
+                obs = self._step_to(mcp, budget, pos, yaw, -1, 0)
+                obs = self._step_to(mcp, budget, pos, yaw, -1, 0)
+                obs = self._step_to(mcp, budget, pos, yaw, 0, -1)
+                budget.consume()
+                self._call(mcp, "interact", intention="escolher_pista_causal_verdadeira")
+                traj_positions = [[0.1, 0.1], [0.15, 0.15]]
+                delta_m = [0.2, 0.2]
 
         passed = tdd_verifier()
         isc_dyn = dynamic_isc(traj_positions, delta_m) if traj_positions else 1.0
 
+        mnhi3_ok = True
+        if self.mnhi3_bridge is not None:
+            mnhi3_ok, _ = self.mnhi3_bridge.verify_integrity()
+
+        audit_valid = self.auditor.verify_chain() and mnhi3_ok
+        effective_pass = passed and audit_valid
+
         trigger_name = {1: "tocar_cubo", 2: "npc_sede", 3: "espelho_robo", 4: "ruido_falso"}[level]
-        ok_distill, msg = self.distiller.commit_if_verified(
+        _, msg = self.distiller.commit_if_verified(
             rule_id=f"rule_lvl_{level}",
             trigger=trigger_name,
             action_plan=[f"solve_level_{level}"],
             steps_used=budget.ticks,
-            tdd_passed=passed,
+            tdd_passed=effective_pass,
             regression_suite_fn=regression_fn,
         )
 
         return EpisodeResult(
             level=level,
-            passed=passed,
+            passed=effective_pass,
             steps=budget.ticks,
             isc_dynamic=isc_dyn,
-            audit_valid=self.auditor.verify_chain(),
+            audit_valid=audit_valid,
             distilled_message=msg,
         )
