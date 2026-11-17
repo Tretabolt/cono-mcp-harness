@@ -1,0 +1,9 @@
+[project]
+name = "cono-mcp-harness"
+version = "0.1.0"
+description = "CONO / MNHI 3.0 Embodied MCP Cognitive Harness & Causal Verification Suite"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["packages"]
+testpaths = ["scenarios"]

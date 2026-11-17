@@ -1,0 +1,87 @@
+from dataclasses import dataclass
+from typing import Sequence
+from .metrics import jensen_shannon_divergence_bits
+
+
+@dataclass
+class VetoResult:
+    vetoed: bool
+    jsd_current: float
+    jsd_proposed: float
+    reason: str
+
+
+class Heptagram:
+    """Atuador Etico e Motor de Regras (J_E): aplica vetos de diversidade e penalidade causal."""
+
+    def __init__(
+        self,
+        quarantine_floor: float = 0.05,
+        penalty_factor: float = 0.5,
+        reward_factor: float = 1.10,
+        jsd_min_safe: float = 0.15,
+    ) -> None:
+        self.quarantine_floor = quarantine_floor
+        self.penalty_factor = penalty_factor
+        self.reward_factor = reward_factor
+        self.jsd_min_safe = jsd_min_safe
+        self.credits: dict[str, float] = {}
+        self.quarantined: set[str] = set()
+
+    def get_credit(self, unit_id: str) -> float:
+        return self.credits.get(unit_id, 1.0)
+
+    def is_quarantined(self, unit_id: str) -> bool:
+        return unit_id in self.quarantined
+
+    def apply_penalty(self, unit_id: str) -> float:
+        """Penaliza peso de confianca/credito causal por evento de falha (0.5^k)."""
+        curr = self.get_credit(unit_id)
+        updated = curr * self.penalty_factor
+        self.credits[unit_id] = updated
+        if updated < self.quarantine_floor:
+            self.quarantined.add(unit_id)
+        return updated
+
+    def apply_reward(self, unit_id: str) -> float:
+        if self.is_quarantined(unit_id):
+            return self.get_credit(unit_id)
+        curr = self.get_credit(unit_id)
+        updated = min(1.0, curr * self.reward_factor)
+        self.credits[unit_id] = updated
+        return updated
+
+    def release_from_quarantine(self, unit_id: str, reset_credit: float = 0.25) -> None:
+        self.quarantined.discard(unit_id)
+        self.credits[unit_id] = reset_credit
+
+    def evaluate_law_change(
+        self,
+        p_current: Sequence[float],
+        p_proposed: Sequence[float],
+        p_tyranny: Sequence[float],
+    ) -> VetoResult:
+        """Regra de Vetos: barra propostas que aproximam a Noosfera da Tirania Causal."""
+        jsd_curr = jensen_shannon_divergence_bits(p_current, p_tyranny)
+        jsd_prop = jensen_shannon_divergence_bits(p_proposed, p_tyranny)
+
+        if jsd_prop < self.jsd_min_safe:
+            return VetoResult(
+                vetoed=True,
+                jsd_current=jsd_curr,
+                jsd_proposed=jsd_prop,
+                reason=f"JSD proposta ({jsd_prop:.4f}) abaixo do piso minimo ({self.jsd_min_safe:.4f}).",
+            )
+        if jsd_prop < jsd_curr:
+            return VetoResult(
+                vetoed=True,
+                jsd_current=jsd_curr,
+                jsd_proposed=jsd_prop,
+                reason=f"Regressao de diversidade: JSD caiu de {jsd_curr:.4f} para {jsd_prop:.4f}.",
+            )
+        return VetoResult(
+            vetoed=False,
+            jsd_current=jsd_curr,
+            jsd_proposed=jsd_prop,
+            reason="Diversidade informacional conservada.",
+        )

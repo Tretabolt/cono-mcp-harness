@@ -1,0 +1,14 @@
+services:
+  cono-harness-jail:
+    build: .
+    container_name: cono_ai_jail
+    network_mode: "none"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: "1.0"
