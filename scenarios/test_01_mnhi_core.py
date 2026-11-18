@@ -83,6 +83,28 @@ class TestMNHICore(unittest.TestCase):
         auditor.entries[0].action = "adulterado"
         self.assertFalse(auditor.verify_chain())
 
+    def test_h_causal_blocks_tyranny_and_allows_meta_symbol_emergence(self) -> None:
+        from mnhi_memory.metrics import causal_entropy_bits, can_emerge_meta_symbol
+        from mnhi_memory import CanonicalHasher, MerkleTree
+
+        # Cenario 1: Tirania Causal (1 shard domina) -> H_causal ~ 0.63 bits -> BLOQUEADO
+        tyranny = [0.90, 0.033, 0.033, 0.034]
+        self.assertAlmostEqual(causal_entropy_bits(tyranny), 0.6275, places=3)
+        emerged_bad, _, _ = can_emerge_meta_symbol(tyranny, all_symbols_valid=True)
+        self.assertFalse(emerged_bad)
+
+        # Cenario 2: Ordem na Diversidade (4 shards coesos e equilibrados) -> APROVADO
+        balanced = [0.90, 0.88, 0.85, 0.89]
+        emerged_ok, isc_g, h_c = can_emerge_meta_symbol(balanced, all_symbols_valid=True)
+        self.assertTrue(emerged_ok)
+        self.assertGreaterEqual(isc_g, 0.80)
+        self.assertGreaterEqual(h_c, 1.0)
+
+        # Agora sim forja o Hash_Meta_Simbolo com raiz Merkle + H_causal auditado
+        tree = MerkleTree(["s1", "s2", "s3", "s4"])
+        meta_hash = CanonicalHasher.hash_meta_symbol(tree.root, "NOOSFERA_V1", h_c)
+        self.assertEqual(len(meta_hash), 64)
+
     def test_heptagram_jsd_veto_and_quarantine(self) -> None:
         hept = Heptagram(jsd_min_safe=0.15)
         p_curr = [0.4, 0.3, 0.2, 0.1]

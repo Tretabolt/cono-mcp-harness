@@ -158,6 +158,42 @@ def syntergic_factor(isc_local: float, var_lambda: float, eps: float = 1e-6) -> 
     return isc_local / (var_lambda + eps)
 
 
+def causal_entropy_bits(shard_iscs: Sequence[float]) -> float:
+    """
+    H_causal: Entropia de Shannon (base 2) sobre a distribuicao normalizada
+    dos ISCs/pesos entre N shards. Mede diversidade contra Tirania Causal.
+
+    H alto = atividade causal distribuída com diversidade (ordem sem
+    tirania). H baixo = um único shard monopoliza o peso causal
+    (Tirania Causal, H -> 0). Não confunda com o erro antigo (H <= 0,1
+    como teto): o portão correto é um PISO, H >= log2(N)/2.
+    """
+    if not shard_iscs:
+        return 0.0
+    return shannon_entropy_bits(shard_iscs)
+
+
+def can_emerge_meta_symbol(
+    shard_iscs: Sequence[float],
+    all_symbols_valid: bool,
+    min_global_isc: float = 0.80,
+) -> tuple[bool, float, float]:
+    """
+    Regra de Emergencia do Meta-Simbolo (Self Global):
+      1. Todos os simbolos componentes validos;
+      2. ISC_Global (media) >= 0.80 (integracao);
+      3. H_causal >= log2(N) / 2 (diversidade minima: ordem sem tirania).
+    """
+    n = len(shard_iscs)
+    if n < 2 or not all_symbols_valid:
+        return False, 0.0, 0.0
+    isc_global = sum(shard_iscs) / n
+    h_causal = causal_entropy_bits(shard_iscs)
+    min_h = math.log2(n) / 2.0
+    emerged = (isc_global >= min_global_isc) and (h_causal >= min_h)
+    return emerged, isc_global, h_causal
+
+
 def jensen_shannon_divergence_bits(p: Sequence[float], q: Sequence[float]) -> float:
     if len(p) != len(q) or len(p) == 0:
         raise ValueError("Distribuicoes precisam ter o mesmo tamanho > 0.")
