@@ -20,13 +20,19 @@
    - `H_espectral`: Entropia de Shannon (base 2) das magnitudes `ΔM` (passo espacial ou `Δr`/`Δw` na rede de pulsos).
 3. **ISC Topológico (Snapshot do Grafo Causal):**
    `ISC_top = Arestas_Validas / Arestas_Maximas`
-   - Regra de Emergência de Símbolo ("EU Local"): `ISC_top >= 0.85` E `Var(λ_norm) <= 0.25`.
+   - Regra de Emergência de Símbolo ("EU Local"): `ISC_top >= 0.85` E `VarPn <= 0.36`
+     (função `can_emerge_symbol` em `packages/mnhi_memory/metrics.py`). A Var(λ)
+     antiga (limiar 0,25) foi superseded: cega na estrela e hipersensível no K6.
+     Definições canônicas em `DEFINICOES.md` no repo cono-causal-gym (seções 2-3).
 4. **Pentacosagram (Auditor Imutável — Read/Verify/Log):**
    - Cadeia sequencial: `Hash(t) = SHA256(Hash(t-1) + merkle_root + acao + status + d_hyper)`.
    - Detecção de Alucinação: `D_Hyper > τ` (onde `τ` é calibrado por domínio; padrão inicial `τ = 1.0`).
 5. **Heptagram (Atuador Ético / Rules Engine — Enforce):**
    - Veto via Divergência de Jensen-Shannon (base 2, em `[0, 1]`) contra `P_tirania`:
-     `VETO` se `JSD(P_nova || P_tirania) < JSD(P_atual || P_tirania)` OU `JSD(P_nova || P_tirania) < JSD_min` (padrão `0.15` bits para `N=4`).
+     `VETO` se `JSD(P_nova || P_tirania) < JSD(uniforme_N || P_tirania) - 0.05`
+     (piso relativo, margem v0.1) OU `JSD(P_nova || P_tirania) < JSD(P_atual || P_tirania)`
+     (regressão). O piso absoluto antigo (0,15) vetava até a uniforme em N=2.
+     Definições canônicas em `DEFINICOES.md` no repo cono-causal-gym (seção 5).
    - Penalidade por falha auditada: `w_confianca *= 0.5` (quarentena se `w < 0.05`; recuperação `+10%` por acerto TDD até `1.0`).
 
 ## 4. Contrato MCP (POMDP)

@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 from typing import Sequence
-from .metrics import jensen_shannon_divergence_bits
+from .metrics import (
+    jensen_shannon_divergence_bits,
+    jsd_uniforme_para_tirania,
+)
 
 
 @dataclass
@@ -19,12 +22,12 @@ class Heptagram:
         quarantine_floor: float = 0.05,
         penalty_factor: float = 0.5,
         reward_factor: float = 1.10,
-        jsd_min_safe: float = 0.15,
+        margem_jsd: float = 0.05,
     ) -> None:
         self.quarantine_floor = quarantine_floor
         self.penalty_factor = penalty_factor
         self.reward_factor = reward_factor
-        self.jsd_min_safe = jsd_min_safe
+        self.margem_jsd = margem_jsd
         self.credits: dict[str, float] = {}
         self.quarantined: set[str] = set()
 
@@ -61,16 +64,23 @@ class Heptagram:
         p_proposed: Sequence[float],
         p_tyranny: Sequence[float],
     ) -> VetoResult:
-        """Regra de Vetos: barra propostas que aproximam a Noosfera da Tirania Causal."""
+        """Regra de Vetos: barra propostas que aproximam a Noosfera da Tirania Causal.
+
+        Veto relativo (DEFINICOES.md, secao 5): veta se a JSD proposta ficar
+        abaixo de JSD(uniforme, Tirania) - margem, ou se regredir (JSD cair
+        em direcao a tirania). O piso absoluto antigo (0,15) vetava ate a
+        distribuicao uniforme em N=2 (JSD = 0,1468) — por isso foi trocado.
+        """
         jsd_curr = jensen_shannon_divergence_bits(p_current, p_tyranny)
         jsd_prop = jensen_shannon_divergence_bits(p_proposed, p_tyranny)
+        piso_relativo = jsd_uniforme_para_tirania(len(p_tyranny)) - self.margem_jsd
 
-        if jsd_prop < self.jsd_min_safe:
+        if jsd_prop < piso_relativo:
             return VetoResult(
                 vetoed=True,
                 jsd_current=jsd_curr,
                 jsd_proposed=jsd_prop,
-                reason=f"JSD proposta ({jsd_prop:.4f}) abaixo do piso minimo ({self.jsd_min_safe:.4f}).",
+                reason=f"JSD proposta ({jsd_prop:.4f}) abaixo do piso relativo ({piso_relativo:.4f}).",
             )
         if jsd_prop < jsd_curr:
             return VetoResult(

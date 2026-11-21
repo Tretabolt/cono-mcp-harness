@@ -89,25 +89,10 @@ def topological_isc(num_valid_edges: int, num_nodes: int, directed: bool = False
     return min(1.0, max(0.0, num_valid_edges / max_edges))
 
 
-def laplacian_eigenvalues_norm(adj: Sequence[Sequence[float]], max_iter: int = 200) -> list[float]:
-    """Calcula autovalores da Laplaciana Normalizada L_norm = I - D^(-1/2) A D^(-1/2) via Jacobi."""
-    n = len(adj)
-    if n == 0:
-        return []
-    if n == 1:
-        return [0.0]
-
-    deg = [sum(row) for row in adj]
-    inv_sqrt = [1.0 / math.sqrt(d) if d > 1e-12 else 0.0 for d in deg]
-
-    mat = [[0.0] * n for _ in range(n)]
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                mat[i][j] = (1.0 if deg[i] > 1e-12 else 0.0) - inv_sqrt[i] * adj[i][j] * inv_sqrt[j]
-            else:
-                mat[i][j] = -inv_sqrt[i] * adj[i][j] * inv_sqrt[j]
-
+def _autovalores_jacobi(mat: list[list[float]], max_iter: int = 200) -> list[float]:
+    """Rotacoes de Jacobi: autovalores de uma matriz simetrica (copia)."""
+    n = len(mat)
+    mat = [row[:] for row in mat]
     for _ in range(max_iter * n):
         max_val = 0.0
         p, q = 0, 1
@@ -143,8 +128,95 @@ def laplacian_eigenvalues_norm(adj: Sequence[Sequence[float]], max_iter: int = 2
         mat[p][q] = 0.0
         mat[q][p] = 0.0
 
-    eigs = sorted(max(0.0, mat[i][i]) for i in range(n))
-    return eigs
+    return sorted(max(0.0, mat[i][i]) for i in range(n))
+
+
+def laplacian_eigenvalues_norm(adj: Sequence[Sequence[float]], max_iter: int = 200) -> list[float]:
+    """Calcula autovalores da Laplaciana Normalizada L_norm = I - D^(-1/2) A D^(-1/2) via Jacobi."""
+    n = len(adj)
+    if n == 0:
+        return []
+    if n == 1:
+        return [0.0]
+
+    deg = [sum(row) for row in adj]
+    inv_sqrt = [1.0 / math.sqrt(d) if d > 1e-12 else 0.0 for d in deg]
+
+    mat = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                mat[i][j] = (1.0 if deg[i] > 1e-12 else 0.0) - inv_sqrt[i] * adj[i][j] * inv_sqrt[j]
+            else:
+                mat[i][j] = -inv_sqrt[i] * adj[i][j] * inv_sqrt[j]
+
+    return _autovalores_jacobi(mat, max_iter)
+
+
+def laplacian_eigenvalues_comb(adj: Sequence[Sequence[float]], max_iter: int = 200) -> list[float]:
+    """Autovalores da Laplaciana Combinatoria L = D - W via Jacobi.
+
+    Ao contrario da normalizada, esta ve os pesos: reponderar uma aresta
+    muda o espectro. Base da VarP (DEFINICOES.md, secao 3).
+    """
+    n = len(adj)
+    if n == 0:
+        return []
+    if n == 1:
+        return [0.0]
+
+    mat = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                mat[i][j] = sum(adj[i])
+            else:
+                mat[i][j] = -adj[i][j]
+
+    return _autovalores_jacobi(mat, max_iter)
+
+
+def teto_varp(n: int) -> float:
+    """Teto da VarP para n nos: (n-1)/n^2 (DEFINICOES.md, secao 3)."""
+    if n <= 1:
+        return 0.0
+    return (n - 1) / (n * n)
+
+
+def var_ponderada(adj: Sequence[Sequence[float]]) -> float:
+    """VarP = Var(espectro da Laplaciana combinatoria / traco).
+
+    Escala uniforme cancela (o traco absorve); reponderacao relativa fica.
+    """
+    eigs = laplacian_eigenvalues_comb(adj)
+    traco = sum(eigs)
+    if traco <= 1e-12:
+        return 0.0
+    return spectral_variance([e / traco for e in eigs])
+
+
+def var_ponderada_normalizada(adj: Sequence[Sequence[float]]) -> float:
+    """VarPn = VarP / teto(n). Um limiar so, para todo tamanho."""
+    n = len(adj)
+    teto = teto_varp(n)
+    if teto <= 0.0:
+        return 0.0
+    return var_ponderada(adj) / teto
+
+
+LIMIAR_VARP_NORMALIZADA = 0.36
+
+
+def can_emerge_symbol(
+    isc_local: float,
+    varpn: float,
+    limiar_isc: float = 0.85,
+    limiar_varpn: float = LIMIAR_VARP_NORMALIZADA,
+) -> tuple[bool, float, float]:
+    """Regra de Emergencia de Simbolo (DEFINICOES.md, secao 2):
+    ISC_Local >= 0,85 E VarPn <= 0,36. Retorna (emergiu, isc, varpn)."""
+    emergiu = (isc_local >= limiar_isc) and (varpn <= limiar_varpn)
+    return emergiu, isc_local, varpn
 
 
 def spectral_variance(eigenvalues: Sequence[float]) -> float:
@@ -215,3 +287,17 @@ def jensen_shannon_divergence_bits(p: Sequence[float], q: Sequence[float]) -> fl
 
     jsd = 0.5 * kl2(pn, m) + 0.5 * kl2(qn, m)
     return min(1.0, max(0.0, jsd))
+
+
+def prototipo_tirania(n: int) -> list[float]:
+    """Distribuicao da Tirania Causal para N simbolos: [0,9] + resto
+    dividido igualmente (DEFINICOES.md, secao 5)."""
+    if n <= 1:
+        return [1.0]
+    return [0.9] + [0.1 / (n - 1)] * (n - 1)
+
+
+def jsd_uniforme_para_tirania(n: int) -> float:
+    """JSD entre a distribuicao uniforme de N simbolos e a Tirania.
+    E a referencia do veto JSD relativo (DEFINICOES.md, secao 5)."""
+    return jensen_shannon_divergence_bits([1.0 / n] * n, prototipo_tirania(n))

@@ -9,7 +9,10 @@ from mnhi_memory import (
     laplacian_eigenvalues_norm,
     spectral_variance,
     topological_isc,
+    var_ponderada_normalizada,
+    can_emerge_symbol,
     jensen_shannon_divergence_bits,
+    jsd_uniforme_para_tirania,
 )
 
 
@@ -28,18 +31,59 @@ class TestMNHICore(unittest.TestCase):
         self.assertIn(ring.get_shard(h), {"shard_0", "shard_1", "shard_2", "shard_3"})
 
     def test_laplacian_symbol_emergence_k3_vs_k5(self) -> None:
-        # K3: Var(lambda) = 0.5 -> rejeitado para simbolo estavel (Y = 0.25)
+        # Regra canônica (DEFINICOES.md, seções 2-3): ISC >= 0,85 E VarPn <= 0,36.
+        # A Var(λ) antiga fica só como diagnóstico: ela rejeitava o K3 (0,5)
+        # por artefato — sob VarPn o K3 uniforme é Símbolo (0,25 <= 0,36).
         k3 = [[0, 1, 1], [1, 0, 1], [1, 1, 0]]
         eigs_k3 = laplacian_eigenvalues_norm(k3)
         self.assertAlmostEqual(spectral_variance(eigs_k3), 0.5, places=4)
+        self.assertAlmostEqual(var_ponderada_normalizada(k3), 0.25, places=4)
+        self.assertTrue(can_emerge_symbol(1.0, 0.25)[0])
 
-        # K5: ISC_top = 1.0 e Var(lambda) = 0.25 -> aprovado!
+        # K5: ISC_top = 1.0 e VarPn = 0,0625 -> aprovado!
         k5 = [[0 if i == j else 1 for j in range(5)] for i in range(5)]
         eigs_k5 = laplacian_eigenvalues_norm(k5)
         var_k5 = spectral_variance(eigs_k5)
         isc_k5 = topological_isc(10, 5)
         self.assertGreaterEqual(isc_k5, 0.85)
         self.assertLessEqual(var_k5, 0.25)
+        self.assertAlmostEqual(var_ponderada_normalizada(k5), 0.0625, places=4)
+        self.assertTrue(can_emerge_symbol(isc_k5, 0.0625)[0])
+
+    def test_varpn_k6_reponderado(self) -> None:
+        # O caso que matou a Var(λ) antiga: um rastro x10 no K6 levava
+        # Var 0,20 -> 0,2882 e matava o Símbolo. Sob VarPn ele sobrevive
+        # (0,175) e só morre com x100 (0,764) — valores do gym, 18-19/11.
+        def k_completo(n, pesado=None):
+            adj = [[0.0] * n for _ in range(n)]
+            for i in range(n):
+                for j in range(n):
+                    if i != j:
+                        adj[i][j] = 1.0
+            if pesado:
+                (a, b), w = pesado
+                adj[a][b] = adj[b][a] = w
+            return adj
+
+        self.assertAlmostEqual(
+            var_ponderada_normalizada(k_completo(6)), 0.04, places=4
+        )
+        self.assertAlmostEqual(
+            var_ponderada_normalizada(k_completo(6, ((0, 1), 10.0))),
+            0.175,
+            places=3,
+        )
+        self.assertTrue(
+            can_emerge_symbol(1.0, 0.175)[0]
+        )
+        self.assertAlmostEqual(
+            var_ponderada_normalizada(k_completo(6, ((0, 1), 100.0))),
+            0.764,
+            places=3,
+        )
+        self.assertFalse(
+            can_emerge_symbol(1.0, 0.764)[0]
+        )
 
     def test_merkle_inclusion_and_pentacosagram_tamper_detection(self) -> None:
         h_true = CanonicalHasher.hash_edge("A", "C", "VERDADEIRO")
@@ -106,15 +150,20 @@ class TestMNHICore(unittest.TestCase):
         self.assertEqual(len(meta_hash), 64)
 
     def test_heptagram_jsd_veto_and_quarantine(self) -> None:
-        hept = Heptagram(jsd_min_safe=0.15)
+        # Veto JSD relativo (DEFINICOES.md, secao 5): veta se a JSD proposta
+        # ficar abaixo de JSD(uniforme, Tirania) - 0,05, ou se regredir.
+        # N=4: piso relativo = 0,3436 - 0,05 = 0,2936.
+        hept = Heptagram()
         p_curr = [0.4, 0.3, 0.2, 0.1]
         p_prop_tirania = [0.6, 0.2, 0.1, 0.1]
         p_tirania = [0.9, 0.033, 0.033, 0.034]
 
         jsd_curr = jensen_shannon_divergence_bits(p_curr, p_tirania)
         jsd_prop = jensen_shannon_divergence_bits(p_prop_tirania, p_tirania)
-        self.assertGreater(jsd_curr, 0.15)
-        self.assertLess(jsd_prop, 0.15)
+        piso_relativo = jsd_uniforme_para_tirania(4) - 0.05
+        self.assertAlmostEqual(piso_relativo, 0.2936, places=3)
+        self.assertLess(jsd_prop, piso_relativo)
+        self.assertLess(jsd_prop, jsd_curr)
 
         veto = hept.evaluate_law_change(p_curr, p_prop_tirania, p_tirania)
         self.assertTrue(veto.vetoed)

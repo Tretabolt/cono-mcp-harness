@@ -39,7 +39,9 @@ log2(N)/2). O portão é um PISO, não um teto — a versão invertida
 
 Nota (20/11): o `CLAUDE.MD` deste repo não documenta o comando de
 testes acima nem menciona a H_causal — esta README existe para cobrir
-isso. As definições de ISC/Var aqui ainda são as antigas (Var(λ) ≤
-0,25, ISC dinâmico 1/(1+H_fase+H_espectral) e topológico): o gym já
-evoluiu para VarPn ≤ 0,36 e o harness não acompanhou — unificar é um
-passo à parte, maior, não feito aqui.
+isso. As definições canônicas (ISC topológico, VarPn ≤ 0,36, H_causal
+como piso, veto JSD relativo) vivem em `DEFINICOES.md` no repo
+cono-causal-gym, unificadas em 20/11 — o harness porta a VarPn
+(`var_ponderada_normalizada`, `can_emerge_symbol`) e o veto relativo
+(`Heptagram.evaluate_law_change`), e a regra antiga Var(λ) ≤ 0,25 está
+superseded.
